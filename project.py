@@ -1,10 +1,20 @@
-from flask import Flask, render_template, request, redirect,jsonify, url_for, flash
-app = Flask(__name__)
+import httplib2
+import json
+import random
+import requests
+import string
 
+from database_setup import Base, Restaurant, MenuItem
+from flask import Flask, flash, jsonify, make_response, render_template, request, redirect, url_for
+from flask import session as login_session
+from oauth2client.client import FlowExchangeError, flow_from_clientsecrets
 from sqlalchemy import create_engine, asc
 from sqlalchemy.orm import sessionmaker
-from database_setup import Base, Restaurant, MenuItem
 
+from constants import CLIENT_ID, GOOGLE_API_KEY
+
+
+app = Flask(__name__)
 
 # Connect to Database and create database session
 engine = create_engine('sqlite:///restaurantmenu.db')
@@ -13,25 +23,103 @@ Base.metadata.bind = engine
 DBSession = sessionmaker(bind=engine)
 session = DBSession()
 
+# Login
+@app.route('/login')
+def show_login():
+    state = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(32))
+    login_session['state'] = state
+    return render_template('login.html', google_api_key=GOOGLE_API_KEY, STATE=state)
+
+
+# Google POST Request
+@app.route('/gconnect', methods=['POST'])
+def gconnect():
+    if request.args.get('state') != login_session['state']:
+        response = make_response(json.dumps('Invalid state parameter'), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+    code = request.data
+    try:
+        # Upgrade the authorization code into a credentials object
+        oauth_flow = flow_from_clientsecrets('client_secret.json', scope='')
+        oauth_flow.redirect_uri = 'postmessage'
+        credentials = oauth_flow.step2_exchange(code)
+    except FlowExchangeError:
+        response = make_response(json.dumps('Failed to upgrade the authorization code.'), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+
+    # Check that the access token is valid.
+    access_token = credentials.access_token
+    url = ('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=%s' % access_token)
+    h = httplib2.Http()
+    result = json.loads(h.request(url, 'GET')[1])
+
+    # If there was an error in the access token info, abort.
+    if result.get('error') is not None:
+        response = make_response(json.dumps(result.get('error')), 50)
+        response.headers['Content-Type'] = 'application/json'
+
+    # Verify that the access token is used for the intended user.
+    gplus_id = credentials.id_token['sub']
+    if result['user_id'] != gplus_id:
+        response = make_response(json.dumps("Token's user ID doesn't match given user ID."), 401)
+        response.headers['Content-Type'] = 'application/json'
+        return response
+
+    # Verify that the access token is valid for this app.
+    if result['issued_to'] != CLIENT_ID:
+        response = make_response(json.dumps("Token's client ID does not match app's."), 401)
+        print("Token's client ID does not match app's.")
+        response.headers['Content-Type'] = 'application/json'
+        return response
+
+    # Check to see if user is already logged in
+    stored_credentials = login_session.get('credentials')
+    stored_gplus_id = login_session.get('gplus_id')
+    if stored_credentials is not None and gplus_id == stored_gplus_id:
+        response = make_response(json.dumps('Current user is already connected.'), 200)
+        response.headers['Content-Type'] = 'application/json'
+
+    # Store the access token in the session for later use.
+    login_session['credentials'] = credentials
+    login_session['gplus_id'] = gplus_id
+
+    # Get user info
+    userinfo_url = "https://www.googleapis.com/oauth2/v1/userinfo"
+    params = {'access_token': credentials.access_token, 'alt': 'json'}
+    answer = requests.get(userinfo_url, params=params)
+    data = json.loads(answer.text)
+
+    login_session['username'] = data['name']
+    login_session['picture'] = data['picture']
+    login_session['email'] = data['email']
+
+    output = '<h1>Welcome, %s!</h1>' % login_session['username']
+    output += '<img src="%s" style="width:300px; height: 300px; border-radius: 150px; ' % login_session['picture']
+    output += '-webkit-border-radius: 150px; -mox-border-radius: 150px;">'
+    flash("You are now logged in as %s" % login_session['username'])
+    return output
+
 
 # JSON APIs to view Restaurant Information
 @app.route('/restaurant/<int:restaurant_id>/menu/JSON')
 def restaurantMenuJSON(restaurant_id):
-    restaurant = session.query(Restaurant).filter_by(id = restaurant_id).one()
-    items = session.query(MenuItem).filter_by(restaurant_id = restaurant_id).all()
+    restaurant = session.query(Restaurant).filter_by(id=restaurant_id).one()
+    items = session.query(MenuItem).filter_by(restaurant_id=restaurant_id).all()
     return jsonify(MenuItems=[i.serialize for i in items])
 
 
 @app.route('/restaurant/<int:restaurant_id>/menu/<int:menu_id>/JSON')
 def menuItemJSON(restaurant_id, menu_id):
-    Menu_Item = session.query(MenuItem).filter_by(id = menu_id).one()
-    return jsonify(Menu_Item = Menu_Item.serialize)
+    Menu_Item = session.query(MenuItem).filter_by(id=menu_id).one()
+    return jsonify(Menu_Item=Menu_Item.serialize)
 
 
 @app.route('/restaurant/JSON')
 def restaurantsJSON():
     restaurants = session.query(Restaurant).all()
-    return jsonify(restaurants= [r.serialize for r in restaurants])
+    return jsonify(restaurants=[r.serialize for r in restaurants])
 
 
 # Show all restaurants
@@ -39,14 +127,14 @@ def restaurantsJSON():
 @app.route('/restaurant/')
 def showRestaurants():
   restaurants = session.query(Restaurant).order_by(asc(Restaurant.name))
-  return render_template('restaurants.html', restaurants = restaurants)
+  return render_template('restaurants.html', restaurants=restaurants)
 
 
 # Create a new restaurant
-@app.route('/restaurant/new/', methods=['GET','POST'])
+@app.route('/restaurant/new/', methods=['GET', 'POST'])
 def newRestaurant():
   if request.method == 'POST':
-      newRestaurant = Restaurant(name = request.form['name'])
+      newRestaurant = Restaurant(name=request.form['name'])
       session.add(newRestaurant)
       flash('New Restaurant %s Successfully Created' % newRestaurant.name)
       session.commit()
