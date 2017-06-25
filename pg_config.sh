@@ -11,3 +11,8 @@ pip install Flask-Login==0.1.3
 pip install oauth2client
 pip install requests
 pip install httplib2
+
+cd /vagrant
+python database_setup.py
+python lotsofmenus.py
+python project.py
