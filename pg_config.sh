@@ -11,3 +11,9 @@ pip install Flask-Login==0.1.3
 pip install oauth2client
 pip install requests
 pip install httplib2
+
+cd /vagrant
+python database_setup.py
+python lotsofmenus.py
+echo "Project Started and Running. You can press CTRL+C to close Shell Script and project will continue running inside vagrant"
+python project.py
