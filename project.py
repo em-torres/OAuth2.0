@@ -13,8 +13,8 @@ from sqlalchemy.orm import sessionmaker
 
 from constants import FB_APP_ID, FB_PERMISSION_URL, FB_TOKEN_URL, FB_USER_INFO_URL, FB_USER_PIC_URL
 from constants import CLIENT_ID, GOOGLE_API_KEY, LOGIN_OUTPUT, SCRIPT_FOR_RESTAURANT
-from constants import MESSAGE_LOGOUT, MESSAGE_NOT_LOGGED
-from helpers import create_user, get_user_id, get_user_info
+from constants import MESSAGE_LOGIN, MESSAGE_LOGOUT, MESSAGE_NOT_LOGGED
+from helpers import create_user, get_fb_token, get_user_id, get_user_info, request_to_url
 
 app = Flask(__name__)
 
@@ -55,8 +55,7 @@ def gconnect():
     # Check that the access token is valid.
     access_token = credentials.access_token
     url = ('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=%s' % access_token)
-    h = httplib2.Http()
-    result = json.loads(h.request(url, 'GET')[1])
+    result = request_to_url(url, value=1)
 
     # If there was an error in the access token info, abort.
     if result.get('error') is not None:
@@ -106,7 +105,7 @@ def gconnect():
     login_session['user_id'] = user_id
 
     output = LOGIN_OUTPUT % (login_session['username'],  login_session['picture'])
-    flash("You are now logged in as %s" % login_session['username'])
+    flash(MESSAGE_LOGIN % login_session['username'])
     return output
 
 
@@ -125,16 +124,13 @@ def fbconnect():
     app_id = json.loads(open('fb_client_secrets.json', 'r').read())['web']['app_id']
     app_secret = json.loads(open('fb_client_secrets.json', 'r').read())['web']['app_secret']
     url = FB_TOKEN_URL % (app_id, app_secret, access_token)
-    h = httplib2.Http()
-    result = h.request(url, 'GET')[1]
+    result = request_to_url(url, value=1, to_json=False)
 
     # Use token to get user info from API and Strip Expire Tag from Access Token
-    token = result.split(',')[0].split(':')[1].replace('"', '')
+    token = get_fb_token(result)
     userinfo_url = FB_USER_INFO_URL % token
-    h = httplib2.Http()
-    result = h.request(userinfo_url, 'GET')[1]
+    data = request_to_url(userinfo_url, value=1)
 
-    data = json.loads(result)
     login_session['provider'] = 'facebook'
     login_session['username'] = data["name"]
     login_session['email'] = data["email"]
@@ -142,9 +138,7 @@ def fbconnect():
 
     # Get user picture
     url = FB_USER_PIC_URL % token
-    h = httplib2.Http()
-    result = h.request(url, 'GET')[1]
-    data = json.loads(result)
+    data = request_to_url(url, value=1)
     login_session['picture'] = data['data']['url']
 
     # See if user exists
@@ -154,7 +148,7 @@ def fbconnect():
     login_session['user_id'] = user_id
 
     output = LOGIN_OUTPUT % (login_session['username'], login_session['picture'])
-    flash("You are now logged in as %s" % login_session['username'])
+    flash(MESSAGE_LOGIN % login_session['username'])
     return output
 
 
@@ -215,8 +209,7 @@ def gdisconnect():
 def fbdisconnect():
     facebook_id = login_session['facebook_id']
     url = FB_PERMISSION_URL % facebook_id
-    h = httplib2.Http()
-    result = h.request(url, 'DELETE')[1]
+    result = request_to_url(url, 'DELETE', 1)
 
 
 # JSON APIs to view Restaurant Information

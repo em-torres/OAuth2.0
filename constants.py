@@ -14,6 +14,7 @@ FB_USER_INFO_URL   = FB_USER_URL + "?access_token=%s&fields=name,id,email"
 FB_USER_PIC_URL    = FB_USER_URL + "/picture?access_token=%s&redirect=0&height=200&width=200"
 
 MESSAGE_NOT_LOGGED = "You weren't logged in to begin with!"
+MESSAGE_LOGIN      = "You are now logged in as %s"
 MESSAGE_LOGOUT     = "You have successfully been logged out."
 
 SCRIPT_FOR_RESTAURANT = """
